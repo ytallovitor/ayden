@@ -2,6 +2,48 @@ const micBtn = document.getElementById('micBtn');
 const statusText = document.getElementById('statusText');
 const responseText = document.getElementById('responseText');
 
+// Supabase Init
+const supabaseUrl = "https://rcbyigozsiinfnlmefcd.supabase.co";
+const supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJjYnlpZ296c2lpbmZubG1lZmNkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4NzM1NDYsImV4cCI6MjA5NDQ0OTU0Nn0.dRtqb0kzLxgUiPiADWT1ZTAlldB1lFsDtWxqmxM8Mcw";
+const supabaseClient = window.supabase.createClient(supabaseUrl, supabaseAnonKey);
+let authToken = null;
+
+// Auth Modal
+const loginModal = document.getElementById('loginModal');
+const loginBtn = document.getElementById('loginBtn');
+const loginEmail = document.getElementById('loginEmail');
+const loginPassword = document.getElementById('loginPassword');
+const loginFeedback = document.getElementById('loginFeedback');
+
+async function checkSession() {
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (session) {
+        authToken = session.access_token;
+        loginModal.classList.remove('show');
+    } else {
+        loginModal.classList.add('show');
+    }
+}
+checkSession();
+
+loginBtn.addEventListener('click', async () => {
+    loginBtn.innerText = "Entrando...";
+    loginFeedback.innerText = "";
+    const { data, error } = await supabaseClient.auth.signInWithPassword({
+        email: loginEmail.value,
+        password: loginPassword.value,
+    });
+    
+    if (error) {
+        loginFeedback.innerText = "Erro: " + error.message;
+        loginFeedback.style.color = "#ef4444";
+    } else {
+        authToken = data.session.access_token;
+        loginModal.classList.remove('show');
+    }
+    loginBtn.innerText = "Entrar";
+});
+
 // Modal Elements
 const settingsBtn = document.getElementById('settingsBtn');
 const settingsModal = document.getElementById('settingsModal');
@@ -20,7 +62,9 @@ settingsBtn.addEventListener('click', async () => {
     settingsModal.classList.add('show');
     settingsFeedback.innerText = '';
     try {
-        const res = await fetch('/api/settings');
+        const res = await fetch('/api/settings', {
+            headers: { 'Authorization': `Bearer ${authToken}` }
+        });
         if (res.ok) {
             const data = await res.json();
             if (data) {
@@ -38,7 +82,10 @@ saveSettingsBtn.addEventListener('click', async () => {
     try {
         const res = await fetch('/api/settings', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${authToken}`
+            },
             body: JSON.stringify({
                 groq_key: groqKeyInput.value,
                 gemini_key: geminiKeyInput.value
@@ -130,7 +177,10 @@ async function sendVoiceCommand(base64Data) {
     try {
         const res = await fetch('/api/voice-command', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${authToken}`
+            },
             body: JSON.stringify({ audioBase64: base64Data })
         });
 

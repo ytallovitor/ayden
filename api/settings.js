@@ -2,11 +2,17 @@ import { supabase } from '../src/utils/supabaseClient.js';
 
 export default async function handler(req, res) {
   try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: 'Unauthorized' });
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    if (authError || !user) return res.status(401).json({ error: 'Unauthorized' });
+
     if (req.method === 'GET') {
       const { data, error } = await supabase
         .from('ayden_settings')
         .select('*')
-        .eq('id', 1)
+        .eq('user_id', user.id)
         .single();
         
       if (error && error.code !== 'PGRST116') { // PGRST116 = no rows
@@ -28,7 +34,7 @@ export default async function handler(req, res) {
       
       const { data, error } = await supabase
         .from('ayden_settings')
-        .upsert({ id: 1, groq_key, gemini_key, updated_at: new Date().toISOString() })
+        .upsert({ user_id: user.id, groq_key, gemini_key, updated_at: new Date().toISOString() })
         .select()
         .single();
         

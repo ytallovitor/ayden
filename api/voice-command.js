@@ -11,6 +11,12 @@ export default async function handler(req, res) {
   }
 
   try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: 'Unauthorized' });
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    if (authError || !user) return res.status(401).json({ error: 'Unauthorized' });
+
     let body;
     if (typeof req.body === 'string') {
       try { body = JSON.parse(req.body); } catch (e) { return res.status(400).json({ error: 'Body deve ser JSON válido' }); }
@@ -26,7 +32,7 @@ export default async function handler(req, res) {
     const { data: settings, error: dbError } = await supabase
       .from('ayden_settings')
       .select('groq_key, gemini_key')
-      .eq('id', 1)
+      .eq('user_id', user.id)
       .single();
 
     if (dbError && dbError.code !== 'PGRST116') {
