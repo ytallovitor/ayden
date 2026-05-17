@@ -81,12 +81,28 @@ export default async function handler(req, res) {
 
     if (parsedIntent.type === 'command') {
       console.log(`[HA Webhook Disparando] Action: ${parsedIntent.action}, Device: ${parsedIntent.device}`);
-      const haResult = await haService.sendHomeAssistantCommand(parsedIntent.action, parsedIntent.device);
-      if (!haResult.success) {
-        parsedIntent.speech = "Eu não consegui me comunicar com o controle central no momento.";
-      } else {
-        console.log("[HA Webhook Disparado] Sucesso.");
+      try {
+        const haResult = await haService.sendHomeAssistantCommand(parsedIntent.action, parsedIntent.device);
+        if (!haResult.success) {
+          console.warn("[HA Webhook] Retornou falha, mas a voz continuará.");
+        } else {
+          console.log("[HA Webhook Disparado] Sucesso.");
+        }
+      } catch (haError) {
+        console.error("[HA Webhook] Falhou catastroficamente (provavelmente localhost na Vercel):", haError.message);
       }
+    }
+
+    // Inserir log no banco de dados
+    try {
+      await userSupabase.from('context_logs').insert({
+        user_id: user.id,
+        text_command: transcriptionText,
+        response: parsedIntent.speech
+      });
+      console.log("[DB] Log de contexto salvo com sucesso.");
+    } catch (dbLogErr) {
+      console.error("[DB] Falha ao salvar log de contexto:", dbLogErr.message);
     }
 
     console.log("[TTS Gerado] Criando áudio sintetizado...");
@@ -99,10 +115,10 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error('Pipeline Error:', error);
+    console.error('ERRO CRÍTICO VOICE:', JSON.stringify(error, null, 2));
     return res.status(500).json({
       error: 'Internal Server Error',
-      details: error.message
+      details: error.message || error.details || JSON.stringify(error)
     });
   }
 }
