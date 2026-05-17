@@ -53,8 +53,14 @@ export default async function handler(req, res) {
     const groq = createGroqClient(settings.groq_key);
     const geminiModel = createGeminiClient(settings.gemini_key);
 
-    const base64Data = audioBase64.includes(',') ? audioBase64.split(',')[1] : audioBase64;
-    const audioBuffer = Buffer.from(base64Data, 'base64');
+    const pureBase64 = audioBase64.includes('base64,') ? audioBase64.split('base64,')[1] : audioBase64;
+    const audioBuffer = Buffer.from(pureBase64, 'base64');
+    
+    console.log("Tamanho do Buffer de Áudio (bytes):", audioBuffer.length);
+    if (audioBuffer.length < 100) {
+      throw new Error("Áudio não capturado corretamente pelo celular (tamanho < 100 bytes).");
+    }
+
     const file = await toFile(audioBuffer, 'audio.webm', { type: 'audio/webm' });
 
     console.log("[STT] Transcrevendo áudio...");

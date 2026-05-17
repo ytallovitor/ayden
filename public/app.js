@@ -166,11 +166,13 @@ function startRecording() {
 function stopRecording() {
     if (!isRecording || !mediaRecorder) return;
     isRecording = false;
-    mediaRecorder.stop();
     
-    micBtn.classList.remove('recording');
-    statusText.innerText = "Processando...";
-    statusText.classList.add('processing');
+    setTimeout(() => {
+        mediaRecorder.stop();
+        micBtn.classList.remove('recording');
+        statusText.innerText = "Processando...";
+        statusText.classList.add('processing');
+    }, 300);
 }
 
 async function sendVoiceCommand(base64Data) {
