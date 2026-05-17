@@ -37,6 +37,32 @@ export default async function handler(req, res) {
       }
 
       const { groq_key, gemini_key } = body;
+
+      if (!groq_key || !gemini_key) {
+        return res.status(400).json({ error: "As chaves Groq e Gemini são obrigatórias." });
+      }
+
+      // Validar Chave Groq
+      try {
+        const groqCheck = await fetch('https://api.groq.com/openai/v1/models', {
+          headers: { 'Authorization': `Bearer ${groq_key}` }
+        });
+        if (!groqCheck.ok) {
+          return res.status(400).json({ error: "A chave da Groq fornecida é inválida." });
+        }
+      } catch (e) {
+        return res.status(400).json({ error: "Falha na comunicação ao validar chave da Groq." });
+      }
+
+      // Validar Chave Gemini
+      try {
+        const geminiCheck = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${gemini_key}`);
+        if (!geminiCheck.ok) {
+          return res.status(400).json({ error: "A chave do Gemini fornecida é inválida." });
+        }
+      } catch (e) {
+        return res.status(400).json({ error: "Falha na comunicação ao validar chave do Gemini." });
+      }
       
       const { data, error } = await userSupabase
         .from('ayden_settings')

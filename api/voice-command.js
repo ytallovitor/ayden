@@ -81,20 +81,36 @@ export default async function handler(req, res) {
     const transcriptionText = transcriptionResponse.text;
     
     console.log("[LLM] Analisando intenção...");
-    let geminiResult;
+    let llmText;
     try {
-      geminiResult = await geminiModel.generateContent(transcriptionText);
+      const geminiResult = await geminiModel.generateContent(transcriptionText);
+      llmText = geminiResult.response.text();
+      console.log("[LLM] Resposta gerada com sucesso via Gemini.");
     } catch (geminiError) {
-      console.error("[GEMINI ERROR]:", geminiError.message, geminiError.stack);
-      return res.status(500).json({ error: "Falha na comunicação com o LLM (Gemini)." });
+      console.error("[GEMINI ERROR] Falhou. Ativando fallback Groq Llama 3:", geminiError.message);
+      
+      const systemInstruction = `Você se chama Ayden, um assistente virtual de inteligência e automação residencial.
+Você recebe textos do usuário e deve classificá-los em dois tipos: 'command' (para controlar luzes, ar-condicionado, TVs, etc.) ou 'chat' (para conversas e perguntas).
+Formato de Saída Obrigatório (JSON válido): {"type": "command" ou "chat", "action": "comando_interno_do_hardware" (apenas se for command), "device": "entidade_do_hardware" (apenas se for command), "speech": "Frase curta e natural que você falará de volta ao usuário"}.`;
+
+      const groqChatResult = await groq.chat.completions.create({
+        messages: [
+          { role: 'system', content: systemInstruction },
+          { role: 'user', content: transcriptionText }
+        ],
+        model: 'llama3-8b-8192',
+        response_format: { type: "json_object" }
+      });
+      
+      llmText = groqChatResult.choices[0].message.content;
+      console.log("[LLM] Resposta gerada com sucesso via Groq (Llama 3 Fallback).");
     }
-    const geminiText = geminiResult.response.text();
     
     let parsedIntent;
     try {
-        parsedIntent = JSON.parse(geminiText);
+        parsedIntent = JSON.parse(llmText);
     } catch (e) {
-        throw new Error('Gemini falhou ao retornar JSON.');
+        throw new Error('Falha ao processar a resposta do LLM (Não é um JSON válido).');
     }
 
     if (parsedIntent.type === 'command') {
