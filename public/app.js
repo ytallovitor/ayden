@@ -143,13 +143,20 @@ navigator.mediaDevices.getUserMedia({ audio: true })
         statusText.style.color = "var(--recording)";
     });
 
-micBtn.addEventListener('mousedown', startRecording);
-micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
+let currentBackendAudio = null;
 
-micBtn.addEventListener('mouseup', stopRecording);
-micBtn.addEventListener('mouseleave', stopRecording);
-micBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); });
-micBtn.addEventListener('touchcancel', (e) => { e.preventDefault(); stopRecording(); });
+micBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (isRecording) {
+        stopRecording();
+    } else {
+        window.speechSynthesis.cancel();
+        if (currentBackendAudio) {
+            currentBackendAudio.pause();
+        }
+        startRecording();
+    }
+});
 
 function startRecording() {
     if (isRecording || !mediaRecorder) return;
@@ -197,12 +204,35 @@ async function sendVoiceCommand(base64Data) {
         
         if (data.intent && data.intent.speech) {
             responseText.innerText = data.intent.speech;
+            
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(data.intent.speech);
+            
+            const setBestVoice = () => {
+                const voices = window.speechSynthesis.getVoices();
+                const ptBrVoices = voices.filter(v => v.lang.includes('pt-BR') || v.lang.includes('pt_BR'));
+                const bestVoice = ptBrVoices.find(v => v.name.toLowerCase().includes('google')) || 
+                                  ptBrVoices.find(v => v.name.toLowerCase().includes('premium')) ||
+                                  ptBrVoices.find(v => v.name.toLowerCase().includes('luciana')) ||
+                                  ptBrVoices[0];
+                if (bestVoice) {
+                    utterance.voice = bestVoice;
+                }
+                window.speechSynthesis.speak(utterance);
+            };
+            
+            if (window.speechSynthesis.getVoices().length > 0) {
+                setBestVoice();
+            } else {
+                window.speechSynthesis.onvoiceschanged = setBestVoice;
+            }
         }
 
-        if (data.audioBase64) {
+        // Mantém suporte para áudio gerado no backend, se enviado.
+        if (data.audioBase64 && false) { // Removido do play automático para usar o nativo
             const audioSrc = `data:audio/mp3;base64,${data.audioBase64}`;
-            const audio = new Audio(audioSrc);
-            audio.play();
+            currentBackendAudio = new Audio(audioSrc);
+            currentBackendAudio.play();
         }
 
     } catch (err) {
