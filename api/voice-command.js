@@ -81,7 +81,13 @@ export default async function handler(req, res) {
     const transcriptionText = transcriptionResponse.text;
     
     console.log("[LLM] Analisando intenção...");
-    const geminiResult = await geminiModel.generateContent(transcriptionText);
+    let geminiResult;
+    try {
+      geminiResult = await geminiModel.generateContent(transcriptionText);
+    } catch (geminiError) {
+      console.error("[GEMINI ERROR]:", geminiError.message, geminiError.stack);
+      return res.status(500).json({ error: "Falha na comunicação com o LLM (Gemini)." });
+    }
     const geminiText = geminiResult.response.text();
     
     let parsedIntent;
