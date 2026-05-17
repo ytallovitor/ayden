@@ -55,7 +55,7 @@ export default async function handler(req, res) {
 
     const base64Data = audioBase64.includes(',') ? audioBase64.split(',')[1] : audioBase64;
     const audioBuffer = Buffer.from(base64Data, 'base64');
-    const file = await toFile(audioBuffer, audioName);
+    const file = await toFile(audioBuffer, 'audio.webm', { type: 'audio/webm' });
 
     console.log("[STT] Transcrevendo áudio...");
     const transcriptionResponse = await groq.audio.transcriptions.create({
