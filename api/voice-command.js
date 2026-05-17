@@ -1,3 +1,4 @@
+import { createClient } from '@supabase/supabase-js';
 import { createGroqClient } from '../src/utils/groqClient.js';
 import { createGeminiClient } from '../src/utils/geminiClient.js';
 import { ttsService } from '../src/utils/ttsClient.js';
@@ -17,6 +18,11 @@ export default async function handler(req, res) {
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     if (authError || !user) return res.status(401).json({ error: 'Unauthorized' });
 
+    // Cria um client com o token do usuário para passar pelo RLS
+    const userSupabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${token}` } }
+    });
+
     let body;
     if (typeof req.body === 'string') {
       try { body = JSON.parse(req.body); } catch (e) { return res.status(400).json({ error: 'Body deve ser JSON válido' }); }
@@ -29,7 +35,7 @@ export default async function handler(req, res) {
 
     // Buscar chaves do Supabase
     console.log("[Settings] Puxando chaves ativas do banco...");
-    const { data: settings, error: dbError } = await supabase
+    const { data: settings, error: dbError } = await userSupabase
       .from('ayden_settings')
       .select('groq_key, gemini_key')
       .eq('user_id', user.id)

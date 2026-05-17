@@ -1,3 +1,4 @@
+import { createClient } from '@supabase/supabase-js';
 import { supabase } from '../src/utils/supabaseClient.js';
 
 export default async function handler(req, res) {
@@ -8,8 +9,13 @@ export default async function handler(req, res) {
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     if (authError || !user) return res.status(401).json({ error: 'Unauthorized' });
 
+    // Cria um client com o token do usuário para passar pelo RLS
+    const userSupabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${token}` } }
+    });
+
     if (req.method === 'GET') {
-      const { data, error } = await supabase
+      const { data, error } = await userSupabase
         .from('ayden_settings')
         .select('*')
         .eq('user_id', user.id)
@@ -32,7 +38,7 @@ export default async function handler(req, res) {
 
       const { groq_key, gemini_key } = body;
       
-      const { data, error } = await supabase
+      const { data, error } = await userSupabase
         .from('ayden_settings')
         .upsert({ user_id: user.id, groq_key, gemini_key, updated_at: new Date().toISOString() })
         .select()
@@ -45,7 +51,10 @@ export default async function handler(req, res) {
 
     return res.status(405).json({ error: 'Method Not Allowed' });
   } catch (error) {
-    console.error('Settings API Error:', error);
-    return res.status(500).json({ error: 'Internal Server Error', details: error.message });
+    console.error('Settings API Error Detail:', JSON.stringify(error, null, 2));
+    return res.status(500).json({ 
+      error: 'Internal Server Error', 
+      details: error.message || error.details || JSON.stringify(error) 
+    });
   }
 }
