@@ -18,6 +18,8 @@ export default async function handler(req, res) {
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     if (authError || !user) return res.status(401).json({ error: 'Unauthorized' });
 
+    console.log("[CHECKPOINT 1] Token Validado e Usuário Identificado:", user.id);
+
     // Cria um client com o token do usuário para passar pelo RLS
     const userSupabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, {
       global: { headers: { Authorization: `Bearer ${token}` } }
@@ -32,6 +34,8 @@ export default async function handler(req, res) {
 
     const { audioBase64, audioName = 'audio.webm' } = body;
     if (!audioBase64) return res.status(400).json({ error: 'Campo audioBase64 ausente' });
+
+    console.log("[CHECKPOINT 2] Tamanho original do Base64 recebido:", audioBase64.length);
 
     // Buscar chaves do Supabase
     console.log("[Settings] Puxando chaves ativas do banco...");
@@ -56,12 +60,13 @@ export default async function handler(req, res) {
     const pureBase64 = audioBase64.includes('base64,') ? audioBase64.split('base64,')[1] : audioBase64;
     const audioBuffer = Buffer.from(pureBase64, 'base64');
     
-    console.log("Tamanho do Buffer de Áudio (bytes):", audioBuffer.length);
+    console.log("[CHECKPOINT 3] Buffer criado. Tamanho em bytes:", audioBuffer.length);
     if (audioBuffer.length < 100) {
-      throw new Error("Áudio não capturado corretamente pelo celular (tamanho < 100 bytes).");
+      return res.status(400).json({ error: "Áudio muito curto ou vazio." });
     }
 
     const file = await toFile(audioBuffer, 'audio.webm', { type: 'audio/webm' });
+    console.log("[CHECKPOINT 4] Arquivo 'toFile' da Groq montado com sucesso.");
 
     console.log("[STT] Transcrevendo áudio...");
     const transcriptionResponse = await groq.audio.transcriptions.create({
@@ -72,6 +77,7 @@ export default async function handler(req, res) {
       language: 'pt',
     });
 
+    console.log("[CHECKPOINT 5] Retorno da transcrição recebido da Groq.");
     const transcriptionText = transcriptionResponse.text;
     
     console.log("[LLM] Analisando intenção...");
@@ -121,7 +127,7 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error('ERRO CRÍTICO VOICE:', JSON.stringify(error, null, 2));
+    console.error("[CRITICAL CRASH]:", error.message, error.stack);
     return res.status(500).json({
       error: 'Internal Server Error',
       details: error.message || error.details || JSON.stringify(error)
