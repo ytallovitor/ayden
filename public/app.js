@@ -121,77 +121,151 @@ saveSettingsBtn.addEventListener('click', async () => {
 });
 
 let currentAudio = null;
+let audioContext = null;
+let analyser = null;
+let microphone = null;
+let mediaRecorder = null;
+let audioChunks = [];
+let isCallActive = false;
+let isRecording = false;
+let silenceTimeout = null;
+let animationFrameId = null;
+
+const VOLUME_THRESHOLD = 0.05; 
+const SILENCE_DURATION = 1500; 
 
 function setOrbState(state) {
     orb.className = 'energy-orb ' + state;
-    if (state === 'idle') statusText.innerText = "Toque no orbe para falar";
+    if (state === 'idle') statusText.innerText = "Toque no orbe para iniciar chamada";
     if (state === 'listening') statusText.innerText = "Ouvindo...";
     if (state === 'thinking') statusText.innerText = "Processando...";
     if (state === 'speaking') statusText.innerText = "Ayden falando...";
 }
 
-// Voice Recognition Setup
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-let recognition = null;
-let isRecording = false;
-
-if (!SpeechRecognition) {
-    statusText.innerText = "Reconhecimento de voz não suportado neste navegador.";
-    statusText.style.color = "#ef4444";
-} else {
-    recognition = new SpeechRecognition();
-    recognition.continuous = false; // Modo Tap-to-wake em vez de continuous
-    recognition.interimResults = false;
-    recognition.lang = 'pt-BR';
-
-    recognition.onresult = async (event) => {
-        const transcript = event.results[0][0].transcript.trim();
-        if (!transcript) return;
-
-        setOrbState('thinking');
-        responseText.innerText = `Você: "${transcript}"`;
-        isRecording = false;
-        
-        await sendTextCommand(transcript);
-    };
-
-    recognition.onend = () => {
-        if (isRecording) {
-            setOrbState('thinking');
-            isRecording = false;
-        }
-    };
+async function initCallMode() {
+    if (isCallActive) return;
     
-    recognition.onerror = (e) => {
-        console.warn("Erro no mic:", e.error);
-        if (e.error === 'not-allowed') {
-            statusText.innerText = "Microfone bloqueado. Permita o acesso.";
-        }
-        isRecording = false;
-        setOrbState('idle');
-    };
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 512;
+        analyser.smoothingTimeConstant = 0.2;
+        
+        microphone = audioContext.createMediaStreamSource(stream);
+        microphone.connect(analyser);
+        
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+        
+        mediaRecorder.ondataavailable = e => {
+            if (e.data.size > 0) audioChunks.push(e.data);
+        };
+        
+        mediaRecorder.onstop = async () => {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            audioChunks = [];
+            
+            const reader = new FileReader();
+            reader.readAsDataURL(audioBlob);
+            reader.onloadend = async () => {
+                const base64data = reader.result;
+                setOrbState('thinking');
+                responseText.innerText = "Processando sua voz...";
+                await sendVoiceCommand(base64data);
+            };
+        };
+        
+        isCallActive = true;
+        setOrbState('idle'); 
+        listenLoop();
+        
+    } catch (err) {
+        console.error("Erro ao acessar microfone:", err);
+        statusText.innerText = "Erro ao acessar microfone. Verifique as permissões.";
+        statusText.style.color = "#ef4444";
+    }
 }
 
-orb.addEventListener('click', () => {
+function stopCallMode() {
+    isCallActive = false;
+    isRecording = false;
+    if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+    }
+    if (audioContext) {
+        audioContext.close();
+        audioContext = null;
+    }
+    if (silenceTimeout) {
+        clearTimeout(silenceTimeout);
+        silenceTimeout = null;
+    }
+    setOrbState('idle');
+}
+
+function listenLoop() {
+    if (!isCallActive) return;
+    animationFrameId = requestAnimationFrame(listenLoop);
+
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(dataArray);
+    
+    let sum = 0;
+    for (let i = 0; i < dataArray.length; i++) {
+        const val = dataArray[i] / 255;
+        sum += val * val;
+    }
+    const rms = Math.sqrt(sum / dataArray.length);
+
+    const isAudioPlaying = currentAudio && !currentAudio.paused;
+
+    if (isAudioPlaying) {
+        // Barge-in check (higher threshold to avoid self-triggering)
+        if (rms > VOLUME_THRESHOLD + 0.05) {
+            console.log("Barge-in detectado!");
+            currentAudio.pause();
+            currentAudio.currentTime = 0;
+        }
+        return; 
+    }
+
+    if (rms > VOLUME_THRESHOLD) {
+        if (silenceTimeout) {
+            clearTimeout(silenceTimeout);
+            silenceTimeout = null;
+        }
+        if (!isRecording) {
+            isRecording = true;
+            audioChunks = [];
+            if (mediaRecorder && mediaRecorder.state === 'inactive') {
+                mediaRecorder.start();
+                console.log("Iniciou gravação (voz detectada).");
+                setOrbState('listening');
+            }
+        }
+    } else {
+        if (isRecording && !silenceTimeout) {
+            silenceTimeout = setTimeout(() => {
+                console.log("Silêncio detectado. Parando gravação.");
+                isRecording = false;
+                silenceTimeout = null;
+                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                    mediaRecorder.stop();
+                }
+            }, SILENCE_DURATION);
+        }
+    }
+}
+
+orb.addEventListener('click', async () => {
     if (!authToken) return;
     
-    // Interromper fala se estiver falando
-    if (currentAudio && !currentAudio.paused) {
-        currentAudio.pause();
-        currentAudio.currentTime = 0;
-    }
-    
-    if (isRecording) {
-        recognition.stop();
-        isRecording = false;
-        setOrbState('thinking');
+    if (isCallActive) {
+        stopCallMode();
     } else {
-        try { 
-            recognition.start(); 
-            isRecording = true;
-            setOrbState('listening');
-            responseText.innerText = "";
-        } catch(e) {}
+        await initCallMode();
     }
 });
 
@@ -211,7 +285,7 @@ function startIfReady() {
     }
 }
 
-async function sendTextCommand(text) {
+async function sendVoiceCommand(audioBase64) {
     try {
         const res = await fetch('/api/voice-command', {
             method: 'POST',
@@ -219,7 +293,7 @@ async function sendTextCommand(text) {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${authToken}`
             },
-            body: JSON.stringify({ textCommand: text })
+            body: JSON.stringify({ audioBase64: audioBase64 })
         });
 
         const data = await res.json();
