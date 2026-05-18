@@ -64,9 +64,16 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: "Falha na comunicação ao validar chave do Gemini." });
       }
       
+      // Salva todas as chaves, incluindo a nova elevenlabs_key
       const { data, error } = await userSupabase
         .from('ayden_settings')
-        .upsert({ user_id: user.id, groq_key, gemini_key, elevenlabs_key, updated_at: new Date().toISOString() })
+        .upsert({ 
+          user_id: user.id, 
+          groq_key, 
+          gemini_key, 
+          elevenlabs_key, 
+          updated_at: new Date().toISOString() 
+        })
         .select()
         .single();
         
