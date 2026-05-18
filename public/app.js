@@ -1,4 +1,4 @@
-const micBtn = document.getElementById('micBtn');
+const orb = document.getElementById('orb');
 const statusText = document.getElementById('statusText');
 const responseText = document.getElementById('responseText');
 
@@ -26,22 +26,36 @@ async function checkSession() {
 }
 checkSession();
 
-loginBtn.addEventListener('click', async () => {
+loginBtn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const originalText = loginBtn.innerText;
     loginBtn.innerText = "Entrando...";
     loginFeedback.innerText = "";
-    const { data, error } = await supabaseClient.auth.signInWithPassword({
-        email: loginEmail.value,
-        password: loginPassword.value,
-    });
     
-    if (error) {
-        loginFeedback.innerText = "Erro: " + error.message;
+    try {
+        const { data, error } = await supabaseClient.auth.signInWithPassword({
+            email: loginEmail.value,
+            password: loginPassword.value,
+        });
+        
+        if (error) {
+            loginFeedback.innerText = "Erro: " + error.message;
+            loginFeedback.style.color = "#ef4444";
+            alert("Falha no login: " + error.message);
+        } else {
+            authToken = data.session.access_token;
+            loginModal.classList.remove('show');
+            loginFeedback.innerText = "Sucesso!";
+            loginFeedback.style.color = "#4ade80";
+            setTimeout(startIfReady, 500); // Iniciar voz logo após o login
+        }
+    } catch (err) {
+        loginFeedback.innerText = "Erro inesperado: " + err.message;
         loginFeedback.style.color = "#ef4444";
-    } else {
-        authToken = data.session.access_token;
-        loginModal.classList.remove('show');
+        alert("Erro inesperado: " + err.message);
+    } finally {
+        loginBtn.innerText = originalText;
     }
-    loginBtn.innerText = "Entrar";
 });
 
 // Modal Elements
@@ -52,10 +66,6 @@ const saveSettingsBtn = document.getElementById('saveSettingsBtn');
 const groqKeyInput = document.getElementById('groqKey');
 const geminiKeyInput = document.getElementById('geminiKey');
 const settingsFeedback = document.getElementById('settingsFeedback');
-
-let mediaRecorder;
-let audioChunks = [];
-let isRecording = false;
 
 // Configurações e UI
 settingsBtn.addEventListener('click', async () => {
@@ -106,11 +116,6 @@ saveSettingsBtn.addEventListener('click', async () => {
         saveSettingsBtn.innerText = "Salvar Chaves";
     }
 });
-
-// UI Elements
-const orb = document.getElementById('orb');
-const statusText = document.getElementById('statusText');
-const responseText = document.getElementById('responseText');
 
 function setOrbState(state) {
     orb.className = 'energy-orb ' + state;
@@ -181,9 +186,7 @@ checkSession = async () => {
 };
 checkSession();
 
-loginBtn.addEventListener('click', () => {
-    setTimeout(startIfReady, 2000); // Aguarda o auth setar o token
-});
+
 
 function startIfReady() {
     if (authToken && recognition) {
