@@ -32,10 +32,8 @@ export default async function handler(req, res) {
       body = req.body || {};
     }
 
-    const { audioBase64, audioName = 'audio.webm' } = body;
-    if (!audioBase64) return res.status(400).json({ error: 'Campo audioBase64 ausente' });
-
-    console.log("[CHECKPOINT 2] Tamanho original do Base64 recebido:", audioBase64.length);
+    const { audioBase64, textCommand, audioName = 'audio.webm' } = body;
+    if (!audioBase64 && !textCommand) return res.status(400).json({ error: 'Campo audioBase64 ou textCommand ausente' });
 
     // Buscar chaves do Supabase
     console.log("[Settings] Puxando chaves ativas do banco...");
@@ -57,41 +55,65 @@ export default async function handler(req, res) {
     const groq = createGroqClient(settings.groq_key);
     const geminiModel = createGeminiClient(settings.gemini_key);
 
-    const pureBase64 = audioBase64.includes('base64,') ? audioBase64.split('base64,')[1] : audioBase64;
-    const audioBuffer = Buffer.from(pureBase64, 'base64');
-    
-    console.log("[CHECKPOINT 3] Buffer criado. Tamanho em bytes:", audioBuffer.length);
-    if (audioBuffer.length < 100) {
-      return res.status(400).json({ error: "Áudio muito curto ou vazio." });
+    let transcriptionText = textCommand;
+
+    // Se houver áudio, transcrever primeiro
+    if (!transcriptionText && audioBase64) {
+      console.log("[CHECKPOINT 2] Tamanho original do Base64 recebido:", audioBase64.length);
+      const pureBase64 = audioBase64.includes('base64,') ? audioBase64.split('base64,')[1] : audioBase64;
+      const audioBuffer = Buffer.from(pureBase64, 'base64');
+      
+      console.log("[CHECKPOINT 3] Buffer criado. Tamanho em bytes:", audioBuffer.length);
+      if (audioBuffer.length < 100) {
+        return res.status(400).json({ error: "Áudio muito curto ou vazio." });
+      }
+
+      const file = await toFile(audioBuffer, 'audio.webm', { type: 'audio/webm' });
+      console.log("[CHECKPOINT 4] Arquivo 'toFile' da Groq montado com sucesso.");
+
+      console.log("[STT] Transcrevendo áudio...");
+      const transcriptionResponse = await groq.audio.transcriptions.create({
+        file,
+        model: 'whisper-large-v3',
+        prompt: 'Responda sempre em português brasileiro.',
+        response_format: 'json',
+        language: 'pt',
+      });
+
+      console.log("[CHECKPOINT 5] Retorno da transcrição recebido da Groq.");
+      transcriptionText = transcriptionResponse.text;
     }
 
-    const file = await toFile(audioBuffer, 'audio.webm', { type: 'audio/webm' });
-    console.log("[CHECKPOINT 4] Arquivo 'toFile' da Groq montado com sucesso.");
+    // MEMÓRIA DE CONVERSA - Busca as últimas 6 interações
+    console.log("[Memória] Buscando histórico recente do usuário...");
+    const { data: historyLogs } = await userSupabase
+      .from('context_logs')
+      .select('text_command, response')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(6);
 
-    console.log("[STT] Transcrevendo áudio...");
-    const transcriptionResponse = await groq.audio.transcriptions.create({
-      file,
-      model: 'whisper-large-v3',
-      prompt: 'Responda sempre em português brasileiro.',
-      response_format: 'json',
-      language: 'pt',
-    });
+    let historyContext = "";
+    if (historyLogs && historyLogs.length > 0) {
+      historyContext = "\n\nHistórico recente da conversa:\n";
+      historyLogs.reverse().forEach(log => {
+        historyContext += `Usuário: ${log.text_command}\nAyden: ${log.response}\n`;
+      });
+      historyContext += "\nAgora, responda ao comando a seguir considerando este histórico se for relevante.";
+    }
 
-    console.log("[CHECKPOINT 5] Retorno da transcrição recebido da Groq.");
-    const transcriptionText = transcriptionResponse.text;
-    
+    const systemInstruction = `Você é o Ayden, um assistente de IA direto, inteligente e levemente sarcástico, mas extremamente prestativo. Seu criador é o Ytallo Vitor. Saiba que ele mora em Caruaru, é estudante do bacharelado em Educação Física e atua como estagiário na academia Estação Saúde. Responda sempre de forma curta e natural, como em uma conversa falada. Nunca use formatações como negrito ou listas, pois sua resposta será lida por um sintetizador de voz.${historyContext}\n\nFormato de Saída Obrigatório (JSON válido): {"type": "command" ou "chat", "action": "comando_interno_do_hardware" (apenas se for command), "device": "entidade_do_hardware" (apenas se for command), "speech": "Frase curta e natural que você falará de volta ao usuário"}.`;
+
     console.log("[LLM] Analisando intenção...");
     let llmText;
     try {
-      const geminiResult = await geminiModel.generateContent(transcriptionText);
+      const promptToLLM = systemInstruction + "\n\nComando atual: " + transcriptionText;
+      const geminiResult = await geminiModel.generateContent(promptToLLM);
       llmText = geminiResult.response.text();
       console.log("[LLM] Resposta gerada com sucesso via Gemini.");
     } catch (geminiError) {
       console.error("[GEMINI ERROR] Falhou. Ativando fallback Groq Llama 3:", geminiError.message);
       
-      const systemInstruction = `Você é o Ayden, um assistente de IA direto, inteligente e levemente sarcástico, mas extremamente prestativo. Seu criador é o Ytallo Vitor. Saiba que ele mora em Caruaru, é estudante do bacharelado em Educação Física e atua como estagiário na academia Estação Saúde. Responda sempre de forma curta e natural, como em uma conversa falada. Nunca use formatações como negrito ou listas, pois sua resposta será lida por um sintetizador de voz.
-Formato de Saída Obrigatório (JSON válido): {"type": "command" ou "chat", "action": "comando_interno_do_hardware" (apenas se for command), "device": "entidade_do_hardware" (apenas se for command), "speech": "Frase curta e natural que você falará de volta ao usuário"}.`;
-
       const groqChatResult = await groq.chat.completions.create({
         messages: [
           { role: 'system', content: systemInstruction },

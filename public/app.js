@@ -107,82 +107,94 @@ saveSettingsBtn.addEventListener('click', async () => {
     }
 });
 
-// Gravação de Áudio
-navigator.mediaDevices.getUserMedia({ audio: true })
-    .then(stream => {
-        const options = { mimeType: 'audio/webm;codecs=opus' };
+// UI Elements
+const orb = document.getElementById('orb');
+const statusText = document.getElementById('statusText');
+const responseText = document.getElementById('responseText');
+
+function setOrbState(state) {
+    orb.className = 'energy-orb ' + state;
+    if (state === 'listening') statusText.innerText = "Ouvindo...";
+    if (state === 'thinking') statusText.innerText = "Processando...";
+    if (state === 'speaking') statusText.innerText = "Ayden falando...";
+}
+
+// Voice Recognition & Synthesis Setup
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+
+if (!SpeechRecognition) {
+    statusText.innerText = "Reconhecimento de voz não suportado neste navegador.";
+    statusText.style.color = "#ef4444";
+} else {
+    recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = 'pt-BR';
+
+    let isProcessing = false;
+
+    recognition.onresult = async (event) => {
+        const transcript = event.results[event.results.length - 1][0].transcript.trim();
+        if (!transcript) return;
+
+        // Lógica de Interrupção Real
+        if (window.speechSynthesis.speaking) {
+            window.speechSynthesis.cancel();
+            console.log("Ayden interrompido pelo usuário!");
+        }
+
+        if (isProcessing) return; // Aguarda terminar processamento anterior
         
-        if (!MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-            console.warn("audio/webm;codecs=opus não suportado no navegador. Usando formato padrão.");
-            mediaRecorder = new MediaRecorder(stream);
-        } else {
-            mediaRecorder = new MediaRecorder(stream, options);
+        isProcessing = true;
+        setOrbState('thinking');
+        responseText.innerText = `Você: "${transcript}"`;
+        
+        await sendTextCommand(transcript);
+        
+        isProcessing = false;
+        if (!window.speechSynthesis.speaking) {
+            setOrbState('listening');
         }
+    };
 
-        mediaRecorder.ondataavailable = event => {
-            if (event.data.size > 0) {
-                audioChunks.push(event.data);
-            }
-        };
-
-        mediaRecorder.onstop = async () => {
-            const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
-            audioChunks = []; 
-            
-            const reader = new FileReader();
-            reader.readAsDataURL(audioBlob);
-            reader.onloadend = async () => {
-                const base64data = reader.result;
-                await sendVoiceCommand(base64data);
-            };
-        };
-    })
-    .catch(err => {
-        console.error("Erro ao acessar microfone:", err);
-        statusText.innerText = "Erro de Permissão do Microfone";
-        statusText.style.color = "var(--recording)";
-    });
-
-let currentBackendAudio = null;
-
-micBtn.addEventListener('click', (e) => {
-    e.preventDefault();
-    if (isRecording) {
-        stopRecording();
-    } else {
-        window.speechSynthesis.cancel();
-        if (currentBackendAudio) {
-            currentBackendAudio.pause();
+    recognition.onend = () => {
+        // Loop de reinicialização para garantir escuta contínua
+        if (authToken) {
+            try { recognition.start(); } catch(e) {}
         }
-        startRecording();
-    }
+    };
+    
+    recognition.onerror = (e) => {
+        console.warn("Erro no mic:", e.error);
+        if (e.error === 'not-allowed') {
+            statusText.innerText = "Microfone bloqueado. Permita o acesso.";
+        }
+    };
+}
+
+// Inicializa a escuta quando logado
+const originalCheckSession = checkSession;
+checkSession = async () => {
+    await originalCheckSession();
+    startIfReady();
+};
+checkSession();
+
+loginBtn.addEventListener('click', () => {
+    setTimeout(startIfReady, 2000); // Aguarda o auth setar o token
 });
 
-function startRecording() {
-    if (isRecording || !mediaRecorder) return;
-    isRecording = true;
-    audioChunks = [];
-    mediaRecorder.start();
-    
-    micBtn.classList.add('recording');
-    statusText.innerText = "Ouvindo...";
-    statusText.classList.remove('processing');
-    responseText.innerText = "";
+function startIfReady() {
+    if (authToken && recognition) {
+        try { 
+            recognition.start(); 
+            setOrbState('listening');
+        } catch(e) {}
+    }
 }
 
-function stopRecording() {
-    if (!isRecording || !mediaRecorder) return;
-    isRecording = false;
-    
-    setTimeout(() => {
-        mediaRecorder.stop();
-        micBtn.classList.remove('recording');
-        statusText.innerText = "Processando...";
-        statusText.classList.add('processing');
-    }, 300);
-}
-
-async function sendVoiceCommand(base64Data) {
+async function sendTextCommand(text) {
     try {
         const res = await fetch('/api/voice-command', {
             method: 'POST',
@@ -190,7 +202,7 @@ async function sendVoiceCommand(base64Data) {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${authToken}`
             },
-            body: JSON.stringify({ audioBase64: base64Data })
+            body: JSON.stringify({ textCommand: text })
         });
 
         const data = await res.json();
@@ -199,46 +211,54 @@ async function sendVoiceCommand(base64Data) {
             throw new Error(data.error || `Erro HTTP: ${res.status}`);
         }
         
-        statusText.innerText = "Pronto";
-        statusText.classList.remove('processing');
-        
         if (data.intent && data.intent.speech) {
             responseText.innerText = data.intent.speech;
-            
-            window.speechSynthesis.cancel();
-            const utterance = new SpeechSynthesisUtterance(data.intent.speech);
-            
-            const setBestVoice = () => {
-                const voices = window.speechSynthesis.getVoices();
-                const ptBrVoices = voices.filter(v => v.lang.includes('pt-BR') || v.lang.includes('pt_BR'));
-                const bestVoice = ptBrVoices.find(v => v.name.toLowerCase().includes('google')) || 
-                                  ptBrVoices.find(v => v.name.toLowerCase().includes('premium')) ||
-                                  ptBrVoices.find(v => v.name.toLowerCase().includes('luciana')) ||
-                                  ptBrVoices[0];
-                if (bestVoice) {
-                    utterance.voice = bestVoice;
-                }
-                window.speechSynthesis.speak(utterance);
-            };
-            
-            if (window.speechSynthesis.getVoices().length > 0) {
-                setBestVoice();
-            } else {
-                window.speechSynthesis.onvoiceschanged = setBestVoice;
-            }
-        }
-
-        // Mantém suporte para áudio gerado no backend, se enviado.
-        if (data.audioBase64 && false) { // Removido do play automático para usar o nativo
-            const audioSrc = `data:audio/mp3;base64,${data.audioBase64}`;
-            currentBackendAudio = new Audio(audioSrc);
-            currentBackendAudio.play();
+            speak(data.intent.speech);
         }
 
     } catch (err) {
         console.error("Erro na comunicação:", err);
-        statusText.innerText = "Falha";
-        statusText.classList.remove('processing');
-        responseText.innerText = err.message;
+        setOrbState('listening');
+        responseText.innerText = "Erro: " + err.message;
     }
 }
+
+function speak(text) {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    
+    utterance.onstart = () => setOrbState('speaking');
+    utterance.onend = () => setOrbState('listening');
+
+    const setBestVoice = () => {
+        const voices = window.speechSynthesis.getVoices();
+        const ptVoices = voices.filter(v => v.lang.includes('pt-BR') || v.lang.includes('pt_BR'));
+        
+        // Caça à Voz Natural
+        let bestVoice = ptVoices.find(v => v.name.includes('Google português do Brasil') || 
+                                          v.name.includes('Microsoft Antonio') || 
+                                          v.name.includes('Microsoft Francisca'));
+        
+        if (!bestVoice) {
+            bestVoice = ptVoices.find(v => v.localService === false); // Premium / Cloud
+        }
+        
+        if (!bestVoice) {
+            bestVoice = ptVoices[0]; // Fallback
+        }
+        
+        if (bestVoice) {
+            utterance.voice = bestVoice;
+            console.log("Voz escolhida:", bestVoice.name);
+        }
+        
+        window.speechSynthesis.speak(utterance);
+    };
+
+    if (window.speechSynthesis.getVoices().length > 0) {
+        setBestVoice();
+    } else {
+        window.speechSynthesis.onvoiceschanged = setBestVoice;
+    }
+}
+
