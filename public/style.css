@@ -172,6 +172,18 @@ body {
     margin: 20px auto;
     transition: all 0.4s ease-in-out;
     box-shadow: 0 0 50px rgba(0,0,0,0);
+    cursor: pointer;
+}
+
+.energy-orb.idle {
+    background: radial-gradient(circle at 30% 30%, #475569, #1e293b);
+    box-shadow: 0 0 30px #334155, 0 0 50px #334155;
+    animation: pulse-idle 3s infinite alternate;
+}
+
+@keyframes pulse-idle {
+    0% { transform: scale(1); box-shadow: 0 0 20px #334155; }
+    100% { transform: scale(1.02); box-shadow: 0 0 40px #334155; }
 }
 
 .energy-orb.listening {

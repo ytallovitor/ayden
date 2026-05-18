@@ -65,6 +65,7 @@ const closeModalBtn = document.getElementById('closeModalBtn');
 const saveSettingsBtn = document.getElementById('saveSettingsBtn');
 const groqKeyInput = document.getElementById('groqKey');
 const geminiKeyInput = document.getElementById('geminiKey');
+const elevenlabsKeyInput = document.getElementById('elevenlabsKey');
 const settingsFeedback = document.getElementById('settingsFeedback');
 
 // Configurações e UI
@@ -80,6 +81,7 @@ settingsBtn.addEventListener('click', async () => {
             if (data) {
                 groqKeyInput.value = data.groq_key || '';
                 geminiKeyInput.value = data.gemini_key || '';
+                elevenlabsKeyInput.value = data.elevenlabs_key || '';
             }
         }
     } catch(e) { console.error("Erro ao carregar configurações", e); }
@@ -98,7 +100,8 @@ saveSettingsBtn.addEventListener('click', async () => {
             },
             body: JSON.stringify({
                 groq_key: groqKeyInput.value,
-                gemini_key: geminiKeyInput.value
+                gemini_key: geminiKeyInput.value,
+                elevenlabs_key: elevenlabsKeyInput.value
             })
         });
         
@@ -117,56 +120,45 @@ saveSettingsBtn.addEventListener('click', async () => {
     }
 });
 
+let currentAudio = null;
+
 function setOrbState(state) {
     orb.className = 'energy-orb ' + state;
+    if (state === 'idle') statusText.innerText = "Toque no orbe para falar";
     if (state === 'listening') statusText.innerText = "Ouvindo...";
     if (state === 'thinking') statusText.innerText = "Processando...";
     if (state === 'speaking') statusText.innerText = "Ayden falando...";
 }
 
-// Voice Recognition & Synthesis Setup
+// Voice Recognition Setup
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognition = null;
+let isRecording = false;
 
 if (!SpeechRecognition) {
     statusText.innerText = "Reconhecimento de voz não suportado neste navegador.";
     statusText.style.color = "#ef4444";
 } else {
     recognition = new SpeechRecognition();
-    recognition.continuous = true;
+    recognition.continuous = false; // Modo Tap-to-wake em vez de continuous
     recognition.interimResults = false;
     recognition.lang = 'pt-BR';
 
-    let isProcessing = false;
-
     recognition.onresult = async (event) => {
-        const transcript = event.results[event.results.length - 1][0].transcript.trim();
+        const transcript = event.results[0][0].transcript.trim();
         if (!transcript) return;
 
-        // Lógica de Interrupção Real
-        if (window.speechSynthesis.speaking) {
-            window.speechSynthesis.cancel();
-            console.log("Ayden interrompido pelo usuário!");
-        }
-
-        if (isProcessing) return; // Aguarda terminar processamento anterior
-        
-        isProcessing = true;
         setOrbState('thinking');
         responseText.innerText = `Você: "${transcript}"`;
+        isRecording = false;
         
         await sendTextCommand(transcript);
-        
-        isProcessing = false;
-        if (!window.speechSynthesis.speaking) {
-            setOrbState('listening');
-        }
     };
 
     recognition.onend = () => {
-        // Loop de reinicialização para garantir escuta contínua
-        if (authToken) {
-            try { recognition.start(); } catch(e) {}
+        if (isRecording) {
+            setOrbState('thinking');
+            isRecording = false;
         }
     };
     
@@ -175,25 +167,47 @@ if (!SpeechRecognition) {
         if (e.error === 'not-allowed') {
             statusText.innerText = "Microfone bloqueado. Permita o acesso.";
         }
+        isRecording = false;
+        setOrbState('idle');
     };
 }
+
+orb.addEventListener('click', () => {
+    if (!authToken) return;
+    
+    // Interromper fala se estiver falando
+    if (currentAudio && !currentAudio.paused) {
+        currentAudio.pause();
+        currentAudio.currentTime = 0;
+    }
+    
+    if (isRecording) {
+        recognition.stop();
+        isRecording = false;
+        setOrbState('thinking');
+    } else {
+        try { 
+            recognition.start(); 
+            isRecording = true;
+            setOrbState('listening');
+            responseText.innerText = "";
+        } catch(e) {}
+    }
+});
 
 // Inicializa a escuta quando logado
 const originalCheckSession = checkSession;
 checkSession = async () => {
     await originalCheckSession();
-    startIfReady();
+    if (authToken) {
+        setOrbState('idle');
+    }
 };
 checkSession();
 
-
-
 function startIfReady() {
-    if (authToken && recognition) {
-        try { 
-            recognition.start(); 
-            setOrbState('listening');
-        } catch(e) {}
+    if (authToken) {
+        setOrbState('idle');
     }
 }
 
@@ -216,52 +230,42 @@ async function sendTextCommand(text) {
         
         if (data.intent && data.intent.speech) {
             responseText.innerText = data.intent.speech;
-            speak(data.intent.speech);
+            
+            if (data.audioBase64) {
+                playAudioFromBase64(data.audioBase64);
+            } else {
+                setOrbState('idle');
+            }
+        } else {
+            setOrbState('idle');
         }
 
     } catch (err) {
         console.error("Erro na comunicação:", err);
-        setOrbState('listening');
+        setOrbState('idle');
         responseText.innerText = "Erro: " + err.message;
     }
 }
 
-function speak(text) {
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    
-    utterance.onstart = () => setOrbState('speaking');
-    utterance.onend = () => setOrbState('listening');
-
-    const setBestVoice = () => {
-        const voices = window.speechSynthesis.getVoices();
-        const ptVoices = voices.filter(v => v.lang.includes('pt-BR') || v.lang.includes('pt_BR'));
-        
-        // Caça à Voz Natural
-        let bestVoice = ptVoices.find(v => v.name.includes('Google português do Brasil') || 
-                                          v.name.includes('Microsoft Antonio') || 
-                                          v.name.includes('Microsoft Francisca'));
-        
-        if (!bestVoice) {
-            bestVoice = ptVoices.find(v => v.localService === false); // Premium / Cloud
-        }
-        
-        if (!bestVoice) {
-            bestVoice = ptVoices[0]; // Fallback
-        }
-        
-        if (bestVoice) {
-            utterance.voice = bestVoice;
-            console.log("Voz escolhida:", bestVoice.name);
-        }
-        
-        window.speechSynthesis.speak(utterance);
-    };
-
-    if (window.speechSynthesis.getVoices().length > 0) {
-        setBestVoice();
-    } else {
-        window.speechSynthesis.onvoiceschanged = setBestVoice;
+function playAudioFromBase64(base64) {
+    if (currentAudio) {
+        currentAudio.pause();
     }
+    
+    const audioSrc = `data:audio/mp3;base64,${base64}`;
+    currentAudio = new Audio(audioSrc);
+    
+    currentAudio.onplay = () => {
+        setOrbState('speaking');
+    };
+    
+    currentAudio.onended = () => {
+        setOrbState('idle');
+    };
+    
+    currentAudio.play().catch(e => {
+        console.error("Erro ao tocar áudio:", e);
+        setOrbState('idle');
+    });
 }
 

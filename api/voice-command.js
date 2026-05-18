@@ -39,7 +39,7 @@ export default async function handler(req, res) {
     console.log("[Settings] Puxando chaves ativas do banco...");
     const { data: settings, error: dbError } = await userSupabase
       .from('ayden_settings')
-      .select('groq_key, gemini_key')
+      .select('groq_key, gemini_key, elevenlabs_key')
       .eq('user_id', user.id)
       .single();
 
@@ -161,7 +161,34 @@ export default async function handler(req, res) {
     }
 
     console.log("[TTS Gerado] Criando áudio sintetizado...");
-    const voiceBase64 = await ttsService.generateTTSBase64(parsedIntent.speech);
+    let voiceBase64 = "";
+    if (settings.elevenlabs_key) {
+        try {
+            console.log("[ElevenLabs] Gerando voz...");
+            const elevenRes = await fetch("https://api.elevenlabs.io/v1/text-to-speech/EXAVITQu4vr4xnSDxMaL", {
+                method: "POST",
+                headers: {
+                    "Accept": "audio/mpeg",
+                    "Content-Type": "application/json",
+                    "xi-api-key": settings.elevenlabs_key
+                },
+                body: JSON.stringify({
+                    text: parsedIntent.speech,
+                    model_id: "eleven_multilingual_v2",
+                    voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+                })
+            });
+            if (!elevenRes.ok) throw new Error("ElevenLabs API erro: " + await elevenRes.text());
+            const arrayBuffer = await elevenRes.arrayBuffer();
+            voiceBase64 = Buffer.from(arrayBuffer).toString('base64');
+            console.log("[ElevenLabs] Áudio gerado com sucesso.");
+        } catch (elErr) {
+            console.error("[ElevenLabs Falha] Fazendo fallback para ttsService:", elErr.message);
+            voiceBase64 = await ttsService.generateTTSBase64(parsedIntent.speech);
+        }
+    } else {
+        voiceBase64 = await ttsService.generateTTSBase64(parsedIntent.speech);
+    }
 
     console.log("[Resposta HTTP 200 com Base64] Retornando.");
     return res.status(200).json({

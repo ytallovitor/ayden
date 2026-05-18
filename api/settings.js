@@ -36,7 +36,7 @@ export default async function handler(req, res) {
         body = req.body || {};
       }
 
-      const { groq_key, gemini_key } = body;
+      const { groq_key, gemini_key, elevenlabs_key } = body;
 
       if (!groq_key || !gemini_key) {
         return res.status(400).json({ error: "As chaves Groq e Gemini são obrigatórias." });
@@ -66,7 +66,7 @@ export default async function handler(req, res) {
       
       const { data, error } = await userSupabase
         .from('ayden_settings')
-        .upsert({ user_id: user.id, groq_key, gemini_key, updated_at: new Date().toISOString() })
+        .upsert({ user_id: user.id, groq_key, gemini_key, elevenlabs_key, updated_at: new Date().toISOString() })
         .select()
         .single();
         
